@@ -1,0 +1,15 @@
+[package]
+name = "syncr"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+clap = { version = "4.5", features = ["derive"] }
+iroh = { version = "0.95.1", features = ["discovery-local-network"] }
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rand = "0.9.2"
+thiserror = "2.0.17"
+dirs = "6.0.0"
