@@ -10,6 +10,7 @@ use crate::{
     iroh_utils,
     protocol::{Message, ALPN},
 };
+use tracing::info;
 
 pub async fn run(peer: PublicKey, remote_path: String, local_path: PathBuf) -> Result<()> {
     let secret_key = iroh_utils::load_secret_key().await?;
@@ -22,11 +23,11 @@ pub async fn run(peer: PublicKey, remote_path: String, local_path: PathBuf) -> R
         .bind()
         .await?;
 
-    println!("Connecting to {}...", peer);
+    info!("Connecting to {}...", peer);
 
     // Connect to the peer
     let connection = endpoint.connect(peer, ALPN).await?;
-    println!("Connected!");
+    info!("Connected!");
 
     // Open a bi-directional stream
     let (mut send, mut recv) = connection.open_bi().await?;
@@ -34,23 +35,24 @@ pub async fn run(peer: PublicKey, remote_path: String, local_path: PathBuf) -> R
     // 1. Handshake
     // Read Handshake from server first (server sends first in our serve.rs impl? No wait, usually client starts, let's check serve.rs)
     // serve.rs:
-    //    // Send Handshake
-    //    write_message(&mut send, &handshake).await?;
-    //    // Read Handshake
-    //    let msg = read_message(&mut recv).await?;
+    let handshake = Message::Handshake { version: 1 };
+    // Send Handshake
+    write_message(&mut send, &handshake).await?;
+    // Read Handshake
+    let msg = read_message(&mut recv).await?;
 
     // So Server speaks first.
 
-    let msg = read_message(&mut recv).await?;
+    // let msg = read_message(&mut recv).await?;
     match msg {
         Message::Handshake { version } => {
-            println!("Handshake received from server: version {}", version);
+            info!("Handshake received from server: version {}", version);
         }
         _ => anyhow::bail!("Expected handshake, got {:?}", msg),
     }
-
-    let handshake = Message::Handshake { version: 1 };
-    write_message(&mut send, &handshake).await?;
+    //
+    // let handshake = Message::Handshake { version: 1 };
+    // write_message(&mut send, &handshake).await?;
 
     // 2. Request File
     let req = Message::FileRequest {
@@ -62,11 +64,11 @@ pub async fn run(peer: PublicKey, remote_path: String, local_path: PathBuf) -> R
     let msg = read_message(&mut recv).await?;
     match msg {
         Message::FileData { path, data, .. } => {
-            println!("Received file data for {}", path);
+            info!("Received file data for {}", path);
             tokio::fs::write(&local_path, data)
                 .await
                 .context("Failed to write local file")?;
-            println!("File saved to {:?}", local_path);
+            info!("File saved to {:?}", local_path);
         }
         Message::Error { message } => {
             anyhow::bail!("Remote error: {}", message);
