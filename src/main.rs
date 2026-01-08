@@ -6,6 +6,7 @@ use crate::iroh_utils::init_secret_key;
 
 mod cli;
 mod iroh_utils;
+mod protocol;
 mod store;
 
 #[tokio::main]

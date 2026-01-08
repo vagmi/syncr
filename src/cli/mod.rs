@@ -6,7 +6,9 @@ use std::path::PathBuf;
 use crate::store::Store;
 
 mod allow;
+mod copy;
 mod info;
+pub mod serve;
 mod watch;
 
 #[derive(Parser, Debug)]
@@ -32,6 +34,17 @@ enum Commands {
     Allow { peer: PublicKey, path: PathBuf },
     /// Disallow a peer from accessing a path
     Disallow { peer: PublicKey, path: PathBuf },
+    /// Run the syncr daemon/server to accept connections
+    Serve,
+    /// Copy a file from a remote peer
+    Copy {
+        /// The peer to copy from
+        peer: PublicKey,
+        /// The remote path to copy
+        remote_path: String,
+        /// The local destination path
+        local_path: PathBuf,
+    },
 }
 
 impl Cli {
@@ -41,6 +54,12 @@ impl Cli {
             Commands::Watch { path, delete } => watch::run(&store, path, delete)?,
             Commands::Allow { peer, path } => allow::run_allow(&store, peer, path)?,
             Commands::Disallow { peer, path } => allow::run_disallow(&store, peer, path)?,
+            Commands::Serve => serve::run(store).await?,
+            Commands::Copy {
+                peer,
+                remote_path,
+                local_path,
+            } => copy::run(peer, remote_path, local_path).await?,
         }
         Ok(())
     }
