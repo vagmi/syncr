@@ -4,6 +4,7 @@ use iroh::{
     Endpoint,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tracing::{error, info};
 
 use crate::{
     iroh_utils,
@@ -22,14 +23,14 @@ pub async fn run(store: Store) -> Result<()> {
         .bind()
         .await?;
 
-    println!("Listening on Peer ID: {}", endpoint.id());
+    info!("Listening on Peer ID: {}", endpoint.id());
 
     // Loop to accept incoming connections
     while let Some(incoming) = endpoint.accept().await {
         let store = store.clone();
         tokio::spawn(async move {
             if let Err(e) = handle_connection(incoming, store).await {
-                eprintln!("Connection error: {:?}", e);
+                error!("Connection error: {:?}", e);
             }
         });
     }
@@ -41,10 +42,11 @@ async fn handle_connection(incoming: iroh::endpoint::Incoming, _store: Store) ->
     let connection = incoming.accept()?;
     let connection = connection.await?;
     let remote_id = connection.remote_id();
-    println!("Accepted connection from {}", remote_id);
+    info!("Accepted connection from {}", remote_id);
 
     // Accept a bi-directional stream for control messages
     let (mut send, mut recv) = connection.accept_bi().await?;
+    info!("Bi-directional stream established with {}", remote_id);
 
     // Send Handshake
     let handshake = Message::Handshake { version: 1 };
@@ -54,7 +56,7 @@ async fn handle_connection(incoming: iroh::endpoint::Incoming, _store: Store) ->
     let msg = read_message(&mut recv).await?;
     match msg {
         Message::Handshake { version } => {
-            println!("Handshake received from {}: version {}", remote_id, version);
+            info!("Handshake received from {}: version {}", remote_id, version);
         }
         _ => {
             anyhow::bail!("Expected handshake, got {:?}", msg);
@@ -71,7 +73,7 @@ async fn handle_connection(incoming: iroh::endpoint::Incoming, _store: Store) ->
 
         match msg {
             Message::FileRequest { path } => {
-                println!("Client {} requested file: {}", remote_id, path);
+                info!("Client {} requested file: {}", remote_id, path);
 
                 // Security check: ensure path is within a watched directory?
                 // For this "Copy" prototype, we might just assume we can serve any file the user asks for
@@ -102,7 +104,7 @@ async fn handle_connection(incoming: iroh::endpoint::Incoming, _store: Store) ->
                 }
             }
             _ => {
-                println!("Received unexpected message: {:?}", msg);
+                info!("Received unexpected message: {:?}", msg);
             }
         }
     }
