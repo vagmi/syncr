@@ -40,6 +40,14 @@ pub enum Message {
         offset: u64,
         is_last: bool,
     },
+    /// Notification that a file has been updated on the peer
+    FileUpdateNotification {
+        path: String,
+    },
+    /// Request to start bidirectional syncing for a path
+    StartSync {
+        path: String,
+    },
     Error {
         message: String,
     },

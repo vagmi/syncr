@@ -1,4 +1,5 @@
 use iroh::PublicKey;
+use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
 use std::path::{Path, PathBuf};
 
@@ -116,4 +117,54 @@ impl Store {
             None => Ok(Vec::new()),
         }
     }
+
+    pub fn add_sync(
+        &self,
+        peer: PublicKey,
+        remote_path: String,
+        local_path: PathBuf,
+    ) -> Result<()> {
+        let _key = format!("{}:{}", peer, remote_path); // Simple key for now
+        let _value = postcard::to_stdvec(&local_path)?;
+        // We probably need a better schema to list all syncs.
+        // syncs: <local_path> -> Vec<(Peer, RemotePath)>
+        // But for now let's just use a dedicated tree
+        let syncs = self.db.open_tree("syncs")?;
+
+        // Let's store by local path so we can lookup when watcher fires
+        let local_key = local_path.to_string_lossy().as_bytes().to_vec();
+
+        let mut existing: Vec<SyncConfig> = match syncs.get(&local_key)? {
+            Some(bytes) => postcard::from_bytes(&bytes)?,
+            None => Vec::new(),
+        };
+
+        // Dedup?
+        existing.push(SyncConfig { peer, remote_path });
+
+        syncs.insert(local_key, postcard::to_stdvec(&existing)?)?;
+        Ok(())
+    }
+
+    pub fn list_syncs(&self) -> Result<Vec<(PathBuf, Vec<SyncConfig>)>> {
+        let syncs = self.db.open_tree("syncs")?;
+        let mut results = Vec::new();
+        for item in syncs.iter() {
+            let (key, value) = item?;
+            // Key is bytes of local_path string
+            let path_str = String::from_utf8(key.to_vec())
+                .map_err(|e| StoreError::SystemError(format!("Invalid path key: {}", e)))?;
+            let path = PathBuf::from(path_str);
+
+            let configs: Vec<SyncConfig> = postcard::from_bytes(&value)?;
+            results.push((path, configs));
+        }
+        Ok(results)
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SyncConfig {
+    pub peer: PublicKey,
+    pub remote_path: String,
 }

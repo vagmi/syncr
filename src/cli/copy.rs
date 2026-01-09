@@ -5,12 +5,13 @@ use iroh::{
 };
 use std::path::PathBuf;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tracing::info;
 
 use crate::{
     iroh_utils,
     protocol::{Message, ALPN},
+    sync_utils,
 };
-use tracing::info;
 
 pub async fn run(peer: PublicKey, remote_path: String, local_path: PathBuf) -> Result<()> {
     let secret_key = iroh_utils::load_secret_key().await?;
@@ -33,47 +34,65 @@ pub async fn run(peer: PublicKey, remote_path: String, local_path: PathBuf) -> R
     let (mut send, mut recv) = connection.open_bi().await?;
 
     // 1. Handshake
-    // Read Handshake from server first (server sends first in our serve.rs impl? No wait, usually client starts, let's check serve.rs)
-    // serve.rs:
     let handshake = Message::Handshake { version: 1 };
-    // Send Handshake
     write_message(&mut send, &handshake).await?;
-    // Read Handshake
+
     let msg = read_message(&mut recv).await?;
-
-    // So Server speaks first.
-
-    // let msg = read_message(&mut recv).await?;
     match msg {
         Message::Handshake { version } => {
             info!("Handshake received from server: version {}", version);
         }
         _ => anyhow::bail!("Expected handshake, got {:?}", msg),
     }
-    //
-    // let handshake = Message::Handshake { version: 1 };
-    // write_message(&mut send, &handshake).await?;
 
-    // 2. Request File
-    let req = Message::FileRequest {
-        path: remote_path.clone(),
-    };
-    write_message(&mut send, &req).await?;
+    // 2. Check local file for rsync
+    if local_path.exists() && local_path.is_file() {
+        info!("Local file exists, attempting rsync delta transfer...");
+        let local_data = tokio::fs::read(&local_path).await?;
+        let signature = sync_utils::calculate_signature(&local_data)?;
 
-    // 3. Receive File Data
-    let msg = read_message(&mut recv).await?;
-    match msg {
-        Message::FileData { path, data, .. } => {
-            info!("Received file data for {}", path);
-            tokio::fs::write(&local_path, data)
-                .await
-                .context("Failed to write local file")?;
-            info!("File saved to {:?}", local_path);
+        let req = Message::FileSignature {
+            path: remote_path.clone(),
+            signature,
+        };
+        write_message(&mut send, &req).await?;
+
+        let msg = read_message(&mut recv).await?;
+        match msg {
+            Message::FileDelta { path, delta } => {
+                info!("Received delta for {} ({} bytes)", path, delta.len());
+                let new_data = sync_utils::apply_delta(&local_data, &delta)?;
+                tokio::fs::write(&local_path, new_data).await?;
+                info!("File patched and saved to {:?}", local_path);
+            }
+            Message::Error { message } => {
+                anyhow::bail!("Remote error: {}", message);
+            }
+            _ => anyhow::bail!("Unexpected message: {:?}", msg),
         }
-        Message::Error { message } => {
-            anyhow::bail!("Remote error: {}", message);
+    } else {
+        info!("Local file not found, requesting full download...");
+        // 3. Request Full File
+        let req = Message::FileRequest {
+            path: remote_path.clone(),
+        };
+        write_message(&mut send, &req).await?;
+
+        // 4. Receive File Data
+        let msg = read_message(&mut recv).await?;
+        match msg {
+            Message::FileData { path, data, .. } => {
+                info!("Received file data for {}", path);
+                tokio::fs::write(&local_path, data)
+                    .await
+                    .context("Failed to write local file")?;
+                info!("File saved to {:?}", local_path);
+            }
+            Message::Error { message } => {
+                anyhow::bail!("Remote error: {}", message);
+            }
+            _ => anyhow::bail!("Unexpected message: {:?}", msg),
         }
-        _ => anyhow::bail!("Unexpected message: {:?}", msg),
     }
 
     Ok(())

@@ -7,7 +7,10 @@ use crate::iroh_utils::init_secret_key;
 mod cli;
 mod iroh_utils;
 mod protocol;
-mod store;
+pub mod store;
+mod sync_manager;
+pub mod sync_utils;
+mod watcher;
 
 #[tokio::main]
 async fn main() -> Result<()> {

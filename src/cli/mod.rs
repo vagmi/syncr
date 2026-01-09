@@ -6,9 +6,10 @@ use std::path::PathBuf;
 use crate::store::Store;
 
 mod allow;
-mod copy;
+pub mod copy; // Make public for sync to use
 mod info;
 pub mod serve;
+mod sync;
 mod watch;
 
 #[derive(Parser, Debug)]
@@ -45,6 +46,15 @@ enum Commands {
         /// The local destination path
         local_path: PathBuf,
     },
+    /// Sync a file/folder with a remote peer
+    Sync {
+        /// The peer to sync with
+        peer: PublicKey,
+        /// The remote path to sync
+        remote_path: String,
+        /// The local destination path
+        local_path: PathBuf,
+    },
 }
 
 impl Cli {
@@ -60,6 +70,11 @@ impl Cli {
                 remote_path,
                 local_path,
             } => copy::run(peer, remote_path, local_path).await?,
+            Commands::Sync {
+                peer,
+                remote_path,
+                local_path,
+            } => sync::run(store, peer, remote_path, local_path).await?,
         }
         Ok(())
     }
