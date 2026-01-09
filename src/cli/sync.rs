@@ -3,9 +3,9 @@ use iroh::{
     discovery::{dns::DnsDiscovery, mdns::MdnsDiscovery, pkarr::PkarrPublisher},
     Endpoint, PublicKey,
 };
-use tracing::info;
 use std::path::PathBuf;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tracing::info;
 
 use crate::{
     cli::copy,

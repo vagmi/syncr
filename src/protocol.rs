@@ -13,8 +13,10 @@ pub enum Message {
     },
     /// Response to OpenPath
     PathOpened,
-    /// Request file list
-    ListRequest,
+    /// Request file list for a specific path (recursive)
+    ListRequest {
+        path: String,
+    },
     /// File list response
     ListResponse {
         files: Vec<FileMetadata>,

@@ -3,12 +3,14 @@ use iroh::{
     discovery::{dns::DnsDiscovery, mdns::MdnsDiscovery, pkarr::PkarrPublisher},
     Endpoint, PublicKey,
 };
+use std::path::PathBuf;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{error, info, warn};
+use walkdir::WalkDir;
 
 use crate::{
     iroh_utils,
-    protocol::{Message, ALPN},
+    protocol::{FileMetadata, Message, ALPN},
     store::Store,
     sync_manager::SyncManager,
     sync_utils,
@@ -87,19 +89,94 @@ async fn handle_connection(
         };
 
         match msg {
+            Message::ListRequest { path } => {
+                info!("Client {} requested listing for: {}", remote_id, path);
+                let root_path = PathBuf::from(&path);
+
+                if !root_path.exists() {
+                    let err = Message::Error {
+                        message: format!("Path not found: {}", path),
+                    };
+                    write_message(&mut send, &err).await?;
+                    continue;
+                }
+
+                if root_path.is_file() {
+                    // Just return the single file
+                    let metadata = std::fs::metadata(&root_path)?;
+                    let files = vec![FileMetadata {
+                        path: path.clone(),
+                        len: metadata.len(),
+                        modified: metadata
+                            .modified()?
+                            .duration_since(std::time::UNIX_EPOCH)?
+                            .as_secs(),
+                        is_dir: false,
+                    }];
+                    let resp = Message::ListResponse { files };
+                    write_message(&mut send, &resp).await?;
+                } else {
+                    // It's a directory, walk it
+                    let mut files = Vec::new();
+                    // Use blocking WalkDir inside spawn_blocking if large, but for now direct
+                    for entry in WalkDir::new(&root_path) {
+                        match entry {
+                            Ok(e) => {
+                                // Skip the root dir itself in the listing if we want relative paths from it?
+                                // Protocol definition needs clarity.
+                                // If I request "/tmp/foo", and it contains "bar.txt".
+                                // Do I want "bar.txt" or "/tmp/foo/bar.txt"?
+                                // Sync logic usually wants paths relative to the sync root, OR absolute paths if we are keeping absolute structure.
+                                // But `FileRequest` uses the path string.
+                                // Let's send back the path string that `FileRequest` expects.
+                                // If I request "/tmp/foo", I expect "bar.txt" to be requested as "/tmp/foo/bar.txt"?
+                                // Yes, `serve.rs` just `PathBuf::from(&path)`. So we should send full paths (as provided or absolute).
+                                // `WalkDir` yields paths relative to the `root_path` if given relative, or absolute if given absolute.
+                                // `root_path` comes from `path` string.
+
+                                let entry_path = e.path();
+                                let metadata = e.metadata()?;
+                                let p_str = entry_path.to_string_lossy().to_string();
+
+                                files.push(FileMetadata {
+                                    path: p_str,
+                                    len: metadata.len(),
+                                    modified: metadata
+                                        .modified()?
+                                        .duration_since(std::time::UNIX_EPOCH)?
+                                        .as_secs(),
+                                    is_dir: metadata.is_dir(),
+                                });
+                            }
+                            Err(e) => warn!("Error walking dir: {}", e),
+                        }
+                    }
+                    let resp = Message::ListResponse { files };
+                    write_message(&mut send, &resp).await?;
+                }
+            }
             Message::FileRequest { path } => {
                 info!("Client {} requested file: {}", remote_id, path);
 
                 let path_buf = std::path::PathBuf::from(&path);
-                if path_buf.exists() && path_buf.is_file() {
-                    let data = tokio::fs::read(&path_buf).await?;
-                    let resp = Message::FileData {
-                        path: path.clone(),
-                        data,
-                        offset: 0,
-                        is_last: true,
-                    };
-                    write_message(&mut send, &resp).await?;
+                if path_buf.exists() {
+                    if path_buf.is_dir() {
+                        // Should use ListRequest for dirs, but if requested here, maybe error?
+                        // Or just empty data?
+                        let err = Message::Error {
+                            message: format!("{} is a directory, use ListRequest", path),
+                        };
+                        write_message(&mut send, &err).await?;
+                    } else {
+                        let data = tokio::fs::read(&path_buf).await?;
+                        let resp = Message::FileData {
+                            path: path.clone(),
+                            data,
+                            offset: 0,
+                            is_last: true,
+                        };
+                        write_message(&mut send, &resp).await?;
+                    }
                 } else {
                     let err = Message::Error {
                         message: format!("File not found: {}", path),
